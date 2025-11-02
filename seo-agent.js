@@ -185,11 +185,12 @@ app.get("/", (req, res) => {
   res.json({
     status: "online",
     service: "Agente SEO - Constructora Sarmiento Rodas",
-    version: "1.0.0",
+    version: "1.1.0",
     endpoints: {
       audit: "/audit",
       generate_post: "/generate-post",
       optimize_page: "/optimize-page",
+      update_seo_metas: "/update-seo-metas",
       content_strategy: "/content-strategy"
     }
   });
@@ -385,7 +386,56 @@ Usa el formato especificado en tus instrucciones.
 });
 
 /**
- * ENDPOINT 4: Estrategia de contenido mensual
+ * ENDPOINT 4: Actualizar metas SEO de una página
+ * Actualiza SOLO el título y meta description sin tocar el contenido
+ */
+app.post("/update-seo-metas", async (req, res) => {
+  try {
+    console.log('[UpdateSEOMetas] 🔧 Actualizando metas SEO...');
+    
+    const { post_id, post_type, title, description } = req.body;
+    
+    if (!post_id || !title || !description) {
+      return res.status(400).json({
+        error: "Se requieren los parámetros: post_id, title, description"
+      });
+    }
+    
+    const typeEndpoint = post_type || 'property';
+    
+    console.log(`[UpdateSEOMetas] 📝 Actualizando post ${post_id} (${typeEndpoint})`);
+    
+    // Usar la función auxiliar existente
+    const result = await updatePageSEO(
+      post_id,
+      { title, description },
+      typeEndpoint
+    );
+    
+    console.log('[UpdateSEOMetas] ✅ Metas actualizadas correctamente');
+    
+    res.json({
+      success: true,
+      post_id: post_id,
+      url: result.url,
+      updated: {
+        title: title,
+        description: description
+      },
+      message: "Metas SEO actualizadas exitosamente"
+    });
+    
+  } catch (error) {
+    console.error('[UpdateSEOMetas] ❌ Error:', error.response?.data || error.message);
+    res.status(500).json({
+      error: error.response?.data?.message || error.message,
+      details: error.response?.data
+    });
+  }
+});
+
+/**
+ * ENDPOINT 5: Estrategia de contenido mensual
  * Genera plan editorial del mes
  */
 app.post("/content-strategy", async (req, res) => {
@@ -448,11 +498,12 @@ app.listen(PORT, () => {
 ✅ WordPress: ${WP_BASE_URL}
 
 📡 Endpoints disponibles:
-   → GET  /               (health check)
-   → POST /audit          (auditoría Watchlist)
-   → POST /generate-post  (crear artículo)
-   → POST /optimize-page  (optimizar página)
-   → POST /content-strategy (plan editorial)
+   → GET  /                  (health check)
+   → POST /audit             (auditoría Watchlist)
+   → POST /generate-post     (crear artículo)
+   → POST /optimize-page     (optimizar página)
+   → POST /update-seo-metas  (actualizar metas SEO)
+   → POST /content-strategy  (plan editorial)
 
 🔥 Listo para recibir solicitudes...
   `);
