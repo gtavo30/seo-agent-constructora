@@ -1,6 +1,7 @@
 const express = require("express");
 const OpenAI = require("openai");
 const axios = require("axios");
+const cheerio = require("cheerio");
 require("dotenv").config();
 
 const app = express();
@@ -84,6 +85,83 @@ async function runAssistant(userMessage) {
   } catch (error) {
     console.error('[OpenAI] ❌ Error:', error.message);
     throw error;
+  }
+}
+
+/**
+ * Extrae datos SEO de una URL usando web scraping
+ */
+async function scrapePageData(url) {
+  try {
+    console.log('[Scraper] 🌐 Extrayendo datos de:', url);
+    
+    // Hacer request con timeout y user agent
+    const response = await axios.get(url, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; SEO-Agent/1.0; +https://seo-agent-constructora.onrender.com)'
+      },
+      maxContentLength: 500000 // Limitar a 500KB
+    });
+    
+    const html = response.data;
+    const $ = cheerio.load(html);
+    
+    // Extraer datos SEO
+    const pageData = {
+      // Título
+      title: $('title').text().trim() || 
+             $('meta[property="og:title"]').attr('content') || 
+             'Sin título',
+      
+      // Meta description
+      description: $('meta[name="description"]').attr('content') || 
+                   $('meta[property="og:description"]').attr('content') || 
+                   'Sin meta description',
+      
+      // Headings
+      h1: $('h1').first().text().trim() || 'Sin H1',
+      h2s: $('h2').map((i, el) => $(el).text().trim()).get().slice(0, 5),
+      
+      // Contenido principal (primeros 500 caracteres)
+      mainContent: $('article, main, .content, #content')
+        .first()
+        .text()
+        .trim()
+        .replace(/\s+/g, ' ')
+        .substring(0, 500) || 
+        $('body').text().trim().replace(/\s+/g, ' ').substring(0, 500),
+      
+      // Meta adicionales
+      ogImage: $('meta[property="og:image"]').attr('content') || null,
+      canonical: $('link[rel="canonical"]').attr('href') || url,
+      
+      // Schema markup (detectar si existe)
+      hasSchema: $('script[type="application/ld+json"]').length > 0,
+      
+      // Contar palabras aproximadamente
+      wordCount: $('body').text().trim().split(/\s+/).length
+    };
+    
+    console.log('[Scraper] ✅ Datos extraídos exitosamente');
+    console.log(`[Scraper] 📊 Título: ${pageData.title.substring(0, 50)}...`);
+    console.log(`[Scraper] 📊 H1: ${pageData.h1.substring(0, 50)}...`);
+    console.log(`[Scraper] 📊 Palabras: ~${pageData.wordCount}`);
+    
+    return pageData;
+    
+  } catch (error) {
+    console.error('[Scraper] ❌ Error:', error.message);
+    
+    // Si falla el scraping, devolver datos vacíos
+    return {
+      title: 'Error al extraer título',
+      description: 'Error al extraer descripción',
+      h1: 'Error al extraer H1',
+      h2s: [],
+      mainContent: '',
+      error: error.message
+    };
   }
 }
 
@@ -185,13 +263,18 @@ app.get("/", (req, res) => {
   res.json({
     status: "online",
     service: "Agente SEO - Constructora Sarmiento Rodas",
-    version: "1.1.0",
+    version: "1.2.0",
     endpoints: {
       audit: "/audit",
       generate_post: "/generate-post",
-      optimize_page: "/optimize-page",
+      optimize_page: "/optimize-page (con scraping automático)",
       update_seo_metas: "/update-seo-metas",
       content_strategy: "/content-strategy"
+    },
+    features: {
+      web_scraping: true,
+      auto_analysis: true,
+      wordpress_integration: true
     }
   });
 });
@@ -334,14 +417,14 @@ Responde con el HTML completo del artículo.
 });
 
 /**
- * ENDPOINT 3: Optimizar página existente
+ * ENDPOINT 3: Optimizar página existente (CON SCRAPING AUTOMÁTICO)
  * Analiza una página y sugiere mejoras de SEO
  */
 app.post("/optimize-page", async (req, res) => {
   try {
     console.log('[OptimizePage] 🔧 Optimizando página...');
     
-    const { url, current_title, current_description, keyword } = req.body;
+    const { url, keyword } = req.body;
     
     if (!url) {
       return res.status(400).json({
@@ -349,22 +432,49 @@ app.post("/optimize-page", async (req, res) => {
       });
     }
     
+    // NUEVO: Extraer datos de la página automáticamente
+    const pageData = await scrapePageData(url);
+    
+    // Si hubo error en el scraping pero no crítico, continuar con datos parciales
     const userMessage = `
 TAREA: OPTIMIZE_PAGE
 
-Analiza y optimiza esta página:
+Analiza y optimiza esta página usando los datos extraídos automáticamente:
 
-URL: ${url}
-Título actual: ${current_title || "No especificado"}
-Meta description actual: ${current_description || "No especificada"}
-Keyword objetivo: ${keyword || "No especificada"}
+**URL:** ${url}
 
-Genera:
+**DATOS ACTUALES EXTRAÍDOS:**
+- **Título SEO actual:** ${pageData.title}
+- **Meta description actual:** ${pageData.description}
+- **H1 principal:** ${pageData.h1}
+- **H2s encontrados:** ${pageData.h2s.join(', ') || 'Ninguno'}
+- **Cantidad de palabras:** ~${pageData.wordCount}
+- **Tiene schema markup:** ${pageData.hasSchema ? 'Sí' : 'No'}
+- **Vista previa del contenido:** ${pageData.mainContent.substring(0, 200)}...
+
+${keyword ? `**Keyword objetivo:** ${keyword}` : ''}
+
+${pageData.error ? `⚠️ Nota: Hubo un error parcial al extraer datos (${pageData.error}), pero continúa con lo disponible.` : ''}
+
+**GENERA:**
 1. Nuevo título SEO optimizado (55-60 caracteres)
-2. Nueva meta description (150-160 caracteres)
-3. 3-5 sugerencias de mejora específicas
+   - Debe incluir keyword principal
+   - Debe ser más atractivo que el actual
+   - Formato natural, no robótico
 
-Usa el formato especificado en tus instrucciones.
+2. Nueva meta description (150-160 caracteres)
+   - Debe incluir keyword principal
+   - Debe tener CTA claro
+   - Debe ser más persuasiva que la actual
+
+3. 3-5 sugerencias de mejora específicas basadas en el contenido analizado:
+   - Estructura de headings
+   - Oportunidades de contenido
+   - Schema markup (si falta)
+   - Enlaces internos
+   - Cualquier problema detectado
+
+Usa el formato estructurado especificado en tus instrucciones.
 `;
     
     const recommendations = await runAssistant(userMessage);
@@ -374,7 +484,15 @@ Usa el formato especificado en tus instrucciones.
     res.json({
       success: true,
       url: url,
-      recommendations: recommendations
+      current_data: {
+        title: pageData.title,
+        description: pageData.description,
+        h1: pageData.h1,
+        word_count: pageData.wordCount,
+        has_schema: pageData.hasSchema
+      },
+      recommendations: recommendations,
+      scraped: !pageData.error
     });
     
   } catch (error) {
@@ -496,12 +614,13 @@ app.listen(PORT, () => {
 ✅ Servidor activo en puerto ${PORT}
 ✅ Assistant ID: ${ASSISTANT_ID}
 ✅ WordPress: ${WP_BASE_URL}
+✅ Web Scraping: Habilitado (Cheerio)
 
 📡 Endpoints disponibles:
    → GET  /                  (health check)
    → POST /audit             (auditoría Watchlist)
    → POST /generate-post     (crear artículo)
-   → POST /optimize-page     (optimizar página)
+   → POST /optimize-page     (optimizar página + scraping)
    → POST /update-seo-metas  (actualizar metas SEO)
    → POST /content-strategy  (plan editorial)
 
